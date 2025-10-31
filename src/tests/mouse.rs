@@ -29,17 +29,17 @@ fn test_mouse_move(
     for test_case in test_cases {
         for mouse_action in test_case {
             enigo
-                .move_mouse(mouse_action.0 .0, mouse_action.0 .1, coordinate)
+                .move_mouse(mouse_action.0.0, mouse_action.0.1, coordinate)
                 .unwrap();
             thread::sleep(delay);
             let (x_res, y_res) = enigo.location().unwrap();
             assert_eq!(
-                (mouse_action.1 .0, mouse_action.1 .1),
+                (mouse_action.1.0, mouse_action.1.1),
                 (x_res, y_res),
                 "{} {}, {}",
                 error_text,
-                mouse_action.0 .0,
-                mouse_action.0 .1
+                mouse_action.0.0,
+                mouse_action.0.1
             );
             thread::sleep(delay);
         }
@@ -92,7 +92,7 @@ fn unit_move_mouse_to_boundaries() {
     let mut enigo = Enigo::new(&Settings::default()).unwrap();
 
     let display_size = enigo.main_display().unwrap();
-    println!("Display size {} x {}", display_size.0, display_size.1);
+    log::debug!("Display size {} x {}", display_size.0, display_size.1);
 
     // Move the mouse outside of the boundaries of the screen
     let screen_boundaries = vec![
@@ -130,7 +130,7 @@ fn unit_move_mouse_rel_boundaries() {
     let mut enigo = Enigo::new(&Settings::default()).unwrap();
 
     let display_size = enigo.main_display().unwrap();
-    println!("Display size {} x {}", display_size.0, display_size.1);
+    log::debug!("Display size {} x {}", display_size.0, display_size.1);
 
     // Move the mouse outside of the boundaries of the screen
     let screen_boundaries = vec![
@@ -164,29 +164,19 @@ fn unit_move_mouse_rel_boundaries() {
 
 #[test]
 // Test the main_display function
-// The CI's virtual display has a dimension of 1024x768 (except on macOS where
-// it is 1920x1080). If the test is ran outside of the CI, we don't know the
-// displays dimensions so we just make sure it is greater than 0x0.
+// The CI's virtual display has a dimension of 1024x768. If the test is ran
+// outside of the CI, we don't know the displays dimensions so we just make sure
+// it is greater than 0x0.
 fn unit_display_size() {
     let enigo = Enigo::new(&Settings::default()).unwrap();
     let display_size = enigo.main_display().unwrap();
-    println!("Main display size: {}x{}", display_size.0, display_size.1);
-    if !is_ci() {
+    log::debug!("Main display size: {}x{}", display_size.0, display_size.1);
+    if is_ci() {
+        assert_eq!((display_size.0, display_size.1), (1024, 768));
+    } else {
         assert!(display_size.0 > 0);
         assert!(display_size.1 > 0);
-        return;
     }
-
-    let ci_display = if cfg!(target_os = "macos") {
-        (1920, 1080)
-    } else {
-        (1024, 768)
-    };
-
-    assert_eq!(
-        (display_size.0, display_size.1),
-        (ci_display.0, ci_display.1)
-    );
 }
 
 #[test]
@@ -233,13 +223,19 @@ fn unit_10th_click() {
     }
 }
 
-#[cfg(not(feature = "x11rb"))] // For some reason it stalls
 #[test]
 fn unit_scroll() {
     let delay = super::get_delay();
     let mut enigo = Enigo::new(&Settings::default()).unwrap();
 
-    let test_cases = vec![0, 1, 5, 100, 57899, -57899, -0, -1, -5, -100];
+    // On X11 there is no scroll function but instead we repeatedly simulate a
+    // keypress. This takes a long time for large values. That's why we skip them on
+    // X11
+    let test_cases = if cfg!(any(feature = "xdo", feature = "x11rb")) {
+        vec![0, 1, 5, 100, -0, -1, -5, -100]
+    } else {
+        vec![0, 1, 5, 100, 57899, -57899, -0, -1, -5, -100]
+    };
 
     for length in &test_cases {
         thread::sleep(delay);

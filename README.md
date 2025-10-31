@@ -2,7 +2,7 @@
 [![Docs](https://docs.rs/enigo/badge.svg)](https://docs.rs/enigo)
 [![Dependency status](https://deps.rs/repo/github/enigo-rs/enigo/status.svg)](https://deps.rs/repo/github/enigo-rs/enigo)
 
-![Rust version](https://img.shields.io/badge/rust--version-1.82+-brightgreen.svg)
+![Rust version](https://img.shields.io/badge/rust--version-1.85+-brightgreen.svg)
 [![Crates.io](https://img.shields.io/crates/v/enigo.svg)](https://crates.io/crates/enigo)
 
 # enigo
@@ -39,12 +39,9 @@ By default, enigo currently works on Windows, macOS and Linux (X11). If you want
 
 There are multiple ways how to simulate input on Linux and not all systems support everything. Enigo can also use wayland protocols and libei to simulate input but there are currently some bugs with it. That is why they are hidden behind feature flags.
 
-If you do not want your users to have to install any runtime dependencies on Linux when using X11, you can try the experimental `x11rb` feature.
-
-
 ## Runtime dependencies
 
-Linux users may have to install `libxdo-dev` if they are using `X11`. For example, on Debian-based distros:
+Linux users may have to install `libxdo-dev` if they are using the `xdo` feature. For example, on Debian-based distros:
 
 ```Bash
 apt install libxdo-dev
@@ -68,10 +65,23 @@ On Gentoo:
 emerge -a xdotool
 ```
 
+## Permissions
+
+Some platforms have security measures in place to prevent programs from entering keys or controlling the mouse. Have a look at the [permissions](Permissions.md) documentation to see what you need to do to allow it.
+
 ## Migrating from a previous version
 
 Please have a look at our [changelog](CHANGES.md) to find out what you have to do, if you used a previous version.
 
-## Permissions
+## Debugging
 
-Some platforms have security measures in place to prevent programs from entering keys or controlling the mouse. Have a look at the [permissions](Permissions.md) documentation to see what you need to do to allow it.
+If you encounter an issue and want to debug it, turn on log messages as described [here](DEBUGGING.md).
+
+
+## Testing this crate
+
+*Warning*: The tests will move the mouse, enter text, press keys and open some applications. Read the test cases before you run them so you know what to expect. It's best to close everything so that the tests don't mess with your system. Some of them run for a long time because they are intended to be run in the CI. Make sure to run the tests sequentially, otherwise they will fail because other mouse movements or entered keys are detected. You can do so by running
+
+```Bash
+cargo test --all-features -- --test-threads=1
+```

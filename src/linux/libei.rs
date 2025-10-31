@@ -1,9 +1,9 @@
 use ashpd::desktop::remote_desktop::RemoteDesktop;
 use log::{debug, error, trace, warn};
 use reis::{
+    PendingRequestResult,
     ei::{self, Connection},
     handshake::HandshakeResp,
-    PendingRequestResult,
 };
 use std::{collections::HashMap, os::unix::net::UnixStream, time::Instant};
 use xkbcommon::xkb;
@@ -128,6 +128,19 @@ impl Con {
         }
     }
 
+    #[allow(unnecessary_wraps)] // The wrap is needed for the libei_tokio feature
+    fn custom_block_on<F: Future>(f: F) -> Result<F::Output, NewConError> {
+        #[cfg(feature = "libei_tokio")]
+        if tokio::runtime::Handle::try_current().is_err() {
+            return Ok(tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .build()
+                .map_err(|_| NewConError::EstablishCon("failed to create tokio runtime"))?
+                .block_on(f));
+        }
+        Ok(futures::executor::block_on(f))
+    }
+
     #[allow(clippy::unnecessary_wraps)]
     /// Create a new Enigo instance
     pub fn new() -> Result<Self, NewConError> {
@@ -142,12 +155,7 @@ impl Con {
         let sequence = 0;
         let time_created = Instant::now();
 
-        // Initialize a Tokio runtime
-        let runtime = tokio::runtime::Runtime::new()
-            .map_err(|_| NewConError::EstablishCon("failed to create tokio runtime"))?;
-
-        // Block on an async function within this runtime
-        let context = runtime.block_on(async { Self::open_connection().await });
+        let context = Self::custom_block_on(Self::open_connection())?;
 
         let HandshakeResp {
             connection,
@@ -182,14 +190,17 @@ impl Con {
         con.update(libei_name)
             .map_err(|_| NewConError::EstablishCon("unable to update the libei connection"))?;
 
-        for (device, device_data) in con.devices.iter_mut().filter(|(_, ref device_data)| {
+        for (device, device_data) in con.devices.iter_mut().filter(|(_, device_data)| {
             device_data.device_type == Some(reis::ei::device::DeviceType::Virtual)
                 && device_data.state == DeviceState::Resumed
             // TODO: Should all devices start emulating?
             // && device_data.interface::<ei::Keyboard>().is_some()
         }) {
-            println!("Start emulating");
-            device.start_emulating(con.sequence, con.last_serial);
+            debug!("Start emulating");
+            if !device.is_alive() {
+                return Err(NewConError::EstablishCon("ei::Device is no longer alive"));
+            }
+            device.start_emulating(con.last_serial, con.sequence);
             con.sequence = con.sequence.wrapping_add(1);
             device_data.state = DeviceState::Emulating;
         }
@@ -281,10 +292,17 @@ impl Con {
                             invalid_id,
                         } => {
                             // TODO: Try to recover?
-                            error!("the serial {last_serial} contained an invalid object with the id {invalid_id}");
+                            error!(
+                                "the serial {last_serial} contained an invalid object with the id {invalid_id}"
+                            );
                         }
                         ei::connection::Event::Ping { ping } => {
                             debug!("ping");
+                            if !ping.is_alive() {
+                                return Err(InputError::Simulate(
+                                    "ei::Pingpong is no longer alive",
+                                ));
+                            }
                             ping.done(0);
                         }
                         _ => {
@@ -434,11 +452,11 @@ impl Con {
                                 latched,
                                 group,
                             } => { // TODO: Handle updated modifiers
-                                 // Notification that the EIS
-                                 // implementation has changed modifier states
-                                 // on this device. Future ei_keyboard.key
-                                 // requests must take the new modifier state
-                                 // into account.
+                                // Notification that the EIS
+                                // implementation has changed modifier states
+                                // on this device. Future ei_keyboard.key
+                                // requests must take the new modifier state
+                                // into account.
                             }
                             _ => {}
                         }
@@ -484,22 +502,35 @@ impl Keyboard for Con {
         if let Some((device, device_data)) = self
             .devices
             .iter_mut()
-            .find(|(_, ref device_data)| device_data.interface::<ei::Keyboard>().is_some())
+            .find(|(_, device_data)| device_data.interface::<ei::Keyboard>().is_some())
         {
             if let Some((keyboard, keymap)) = self.keyboards.iter().next() {
                 let keycode = key_to_keycode(keymap, key)?;
 
+                if !keyboard.is_alive() {
+                    return Err(InputError::Simulate("ei::Keyboard is no longer alive"));
+                }
+
                 if direction == Direction::Press || direction == Direction::Click {
                     keyboard.key(keycode - 8, ei::keyboard::KeyState::Press);
+
+                    // It is a client bug to send more than one key request for the same key within
+                    // the same ei_device.frame and the EIS implementation may ignore either or all
+                    // key state changes and/or disconnect the client
+                    // (source https://libinput.pages.freedesktop.org/libei/interfaces/ei_keyboard/index.html#ei_keyboardkey).
+                    // That's why we need to call frame for the press and the release
+                    let elapsed = self.time_created.elapsed().as_secs(); // Is seconds fine?
+                    device.frame(self.sequence, elapsed);
+                    self.sequence = self.sequence.wrapping_add(1);
                 }
                 if direction == Direction::Release || direction == Direction::Click {
                     keyboard.key(keycode - 8, ei::keyboard::KeyState::Released);
+
+                    let elapsed = self.time_created.elapsed().as_secs(); // Is seconds fine?
+                    device.frame(self.sequence, elapsed);
+                    self.sequence = self.sequence.wrapping_add(1);
                 }
 
-                let elapsed = self.time_created.elapsed().as_secs(); // Is seconds fine?
-
-                device.frame(self.sequence, elapsed);
-                self.sequence = self.sequence.wrapping_add(1);
                 self.update("enigo").map_err(|_| {
                     InputError::Simulate("unable to update the libei connection to scroll")
                 })?;
@@ -514,9 +545,12 @@ impl Keyboard for Con {
         if let Some((device, device_data)) = self
             .devices
             .iter_mut()
-            .find(|(_, ref device_data)| device_data.interface::<ei::Keyboard>().is_some())
+            .find(|(_, device_data)| device_data.interface::<ei::Keyboard>().is_some())
         {
             let keyboard = device_data.interface::<ei::Keyboard>().unwrap();
+            if !keyboard.is_alive() {
+                return Err(InputError::Simulate("ei::Keyboard is no longer alive"));
+            }
 
             if direction == Direction::Press || direction == Direction::Click {
                 keyboard.key(keycode - 8, ei::keyboard::KeyState::Press);
@@ -542,7 +576,7 @@ impl Mouse for Con {
         if let Some((device, device_data)) = self
             .devices
             .iter_mut()
-            .find(|(_, ref device_data)| device_data.interface::<ei::Button>().is_some())
+            .find(|(_, device_data)| device_data.interface::<ei::Button>().is_some())
         {
             // Do nothing if one of the mouse scroll buttons was released
             // Releasing one of the scroll mouse buttons has no effect
@@ -574,6 +608,9 @@ impl Mouse for Con {
             };
 
             let vp = device_data.interface::<ei::Button>().unwrap();
+            if !vp.is_alive() {
+                return Err(InputError::Simulate("ei::Button is no longer alive"));
+            }
 
             if direction == Direction::Press || direction == Direction::Click {
                 trace!("vp.button({button}, ei::button::ButtonState::Pressed)");
@@ -611,6 +648,9 @@ impl Mouse for Con {
                     .find(|(_, device_data)| device_data.interface::<ei::Pointer>().is_some())
                 {
                     let vp = device_data.interface::<ei::Pointer>().unwrap();
+                    if !vp.is_alive() {
+                        return Err(InputError::Simulate("ei::Pointer is no longer alive"));
+                    }
                     vp.motion_relative(x, y);
 
                     let elapsed = self.time_created.elapsed().as_secs(); // Is seconds fine?
@@ -637,6 +677,11 @@ impl Mouse for Con {
                     device_data.interface::<ei::PointerAbsolute>().is_some()
                 }) {
                     let vp = device_data.interface::<ei::PointerAbsolute>().unwrap();
+                    if !vp.is_alive() {
+                        return Err(InputError::Simulate(
+                            "ei::PointerAbsolute is no longer alive",
+                        ));
+                    }
                     vp.motion_absolute(x, y);
 
                     let elapsed = self.time_created.elapsed().as_secs(); // Is seconds fine?
@@ -673,6 +718,9 @@ impl Mouse for Con {
             };
             trace!("vp.scroll({x}, {y})");
             let vp = device_data.interface::<ei::Scroll>().unwrap();
+            if !vp.is_alive() {
+                return Err(InputError::Simulate("ei::Scroll is no longer alive"));
+            }
             vp.scroll(x, y);
 
             let elapsed = self.time_created.elapsed().as_secs(); // Is seconds fine?
@@ -691,13 +739,17 @@ impl Mouse for Con {
 
     fn main_display(&self) -> InputResult<(i32, i32)> {
         // TODO Implement this
-        error!("You tried to get the dimensions of the main display. I don't know how this is possible under Wayland. Let me know if there is a new protocol");
+        error!(
+            "You tried to get the dimensions of the main display. I don't know how this is possible under Wayland. Let me know if there is a new protocol"
+        );
         Err(InputError::Simulate("Not implemented yet"))
     }
 
     fn location(&self) -> InputResult<(i32, i32)> {
         // TODO Implement this
-        error!("You tried to get the mouse location. I don't know how this is possible under Wayland. Let me know if there is a new protocol");
+        error!(
+            "You tried to get the mouse location. I don't know how this is possible under Wayland. Let me know if there is a new protocol"
+        );
         Err(InputError::Simulate("Not implemented yet"))
     }
 }
@@ -709,14 +761,14 @@ impl Drop for Con {
             device_data.device_type == Some(reis::ei::device::DeviceType::Virtual)
                 && device_data.state == DeviceState::Emulating
         }) {
-            println!("DROPPED");
+            debug!("DROPPED");
             device.stop_emulating(self.last_serial);
             self.last_serial = self.last_serial.wrapping_add(1);
         }
         self.connection.disconnect(); // Let the server know we voluntarily disconnected
 
         let _ = self.context.flush(); // Ignore the errors if the connection was
-                                      // dropped
+        // dropped
     }
 }
 

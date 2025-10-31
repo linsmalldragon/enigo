@@ -46,6 +46,7 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_sign_loss)]
 #![allow(deprecated)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use std::{
     error::Error,
@@ -75,8 +76,6 @@ pub use platform::Enigo;
 
 #[cfg(target_os = "windows")]
 pub use platform::set_dpi_awareness;
-#[cfg(target_os = "windows")]
-pub use platform::EXT;
 
 mod keycodes;
 /// Contains the available keycodes
@@ -87,7 +86,6 @@ pub const EVENT_MARKER: u32 = 100;
 
 /// Represents a mouse button and is used in e.g
 /// [`Mouse::button`].
-
 // Warning! If there are ANY CHANGES to this enum, we
 // need to change the size of the array in the macOS implementation of the Enigo
 // struct that stores the nth click for each Button
@@ -277,8 +275,9 @@ pub trait Keyboard {
     /// games). Have a look at the [`Keyboard::key`] function,
     /// if you just want to enter a specific key and don't want to worry about
     /// the layout/keymap. Windows only: If you want to enter the keycode
-    /// (scancode) of an extended key, you need to set extra bits. You can
-    /// for example do: `enigo.raw(45 | EXT, Direction::Click)`
+    /// (scancode) of an extended key, you need to set the high byte for the
+    /// extended key too. You can for example do: `enigo.raw(0xE01D,
+    /// Direction::Click) to simulate RControl`
     ///
     /// # Errors
     /// Have a look at the documentation of [`InputError`] to see under which
@@ -342,6 +341,27 @@ pub trait Mouse {
     /// conditions an error will be returned.
     #[doc(alias = "mouse_scroll_x", alias = "mouse_scroll_y")]
     fn scroll(&mut self, length: i32, axis: Axis) -> InputResult<()>;
+
+    /// Smooth scroll using pixel-based scrolling on macOS
+    ///
+    /// This function provides pixel-level precision for scrolling
+    /// offering smoother scrolling behavior compared to the
+    /// standard line-based scrolling.
+    ///
+    /// # Arguments
+    /// * `length` - The number of pixels to scroll. Positive values scroll
+    /// down/right, negative values scroll up/left.
+    /// * `axis` - The axis to scroll along (Horizontal or Vertical)
+    ///
+    /// # Errors
+    /// Have a look at the documentation of [`InputError`] to see under which
+    /// conditions an error will be returned.
+    #[cfg_attr(docsrs, doc(cfg(feature = "platform_specific")))]
+    #[cfg(all(feature = "platform_specific", any(target_os = "macos", doc)))]
+    #[doc(alias = "mouse_smooth_scroll_x", alias = "mouse_smooth_scroll_y")]
+    fn smooth_scroll(&mut self, length: i32, axis: Axis) -> InputResult<()> {
+        unimplemented!()
+    }
 
     /// Get the (width, height) of the main display in pixels. This currently
     /// only works on the main display
@@ -437,8 +457,6 @@ impl Error for NewConError {}
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Settings {
-    /// Sleep delay on Linux X11
-    pub linux_delay: u32,
     /// Display name to connect to when using Linux X11
     pub x11_display: Option<String>,
     /// Display name to connect to when using Linux Wayland
@@ -474,7 +492,6 @@ impl Default for Settings {
     fn default() -> Self {
         debug!("using default settings");
         Self {
-            linux_delay: 12,
             x11_display: None,
             wayland_display: None,
             windows_dw_extra_info: None,

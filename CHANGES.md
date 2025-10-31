@@ -1,12 +1,76 @@
 # Unreleased
 ## Changed
-- Rust: MSRV is 1.82
+
+## Added
+
+## Removed
+- win: `EXT` constant was removed, because it was incorrect and obsolete
+- all: Removed the function `delay` and `set_delay` as they no longer serve a purpose
+- all: Removed the field `linux_delay` from `Settings` struct as it no longer serves a purpose
+
+## Fixed
+- linux: Added `NumpadEnter` key
+- win: Added `NumpadEnter` key
+- win: Extended keys can now be correctly simulated with the raw() function.
+
+# 0.6.1
+## Fixed
+- docs.rs: Fixed build by only activating the `libei_smol` feature and not `libei_tokio`
+
+# 0.6.0
+## Changed
+- linux: libei: Replaced `libei` feature with `libei_tokio` and `libei_smol`
+
+## Added
+- all: So far only functions that were possible on all platforms were implemented in order to keep every thing cross-platform. The new feature `platform_specific` allows you to opt-in to functionality that is only available on one or more platforms. At the beginning the only new platform specific function is smooth scrolling on macOS.
+- macos: added smooth scrolling (only available on macos and hidden behind the `platform_specific` feature)
+- linux: libei: Chose which async runtime you want to use
+
+## Removed
+
+## Fixed
+- linux: libei: The library can now be used inside a Tokio runtime. Previously that was not possible, because it would attempt to start a runtime from within another runtime.
+
+# 0.5.0
+## Changed
+- linux: x11: Use `x11rb` by default to simulate input as it is more reliable, makes it possible to enter raw keycodes, does not need `xdotools` as a runtime dependency and uses native Rust. If you experience issue with the new default, please open an issue. You can disable default features and use the feature `xdo` to use the old method.
+
+## Added
+
+## Removed
+
+## Fixed
+
+# 0.4.2
+## Fixed
+-linux: xdo: Enable entering all unicode characters with the `key` function
+-linux: wayland: Enable entering all unicode characters with the `key` function
+
+# 0.4.1
+## Changed
+
+## Added
+- macOS: The `Enigo` struct implements `Sync`/`Send`
+
+## Removed
+
+## Fixed
+- linux: wayland: Fix releasing raw keys
+- linux: wayland: Don't try to use the input_method protocol if it is unavailable
+- linux: wayland: The `Enigo` struct implements `Sync`/`Send` again
+
+# 0.4.0
+## Changed
+- Rust: MSRV is 1.85
+- Rust: Use edition 2024
+- linux: wayland: Use the keymap the compositor sends instead of a hardcoded one
 
 ## Added
 - macOS: Add to support Mouse special key(Back, Forward)
 - win: Helper function to tell Windows to respect the users scaling settings `set_dpi_awareness`. Read the docs before using it
 - linux: Add support for numpad keys (e.g. `Key::Numpad2`)
 - macOS: Add support for numpad keys (e.g. `Key::Numpad2`)
+- linux: wayland: Implement `main_display()`. It only works reliably if only one screen is connected
 
 ## Removed
 
@@ -14,6 +78,12 @@
 - linux: wayland: Fix the serial number of input_method events
 - linux: wayland: Correct whitespace and nullbyte at the end of the keymap
 - linux: wayland: Send messages in the correct order and make sure Wayland objects are created before they are used
+- linux: wayland: Fix moving the mouse to an absolute coordinate
+- linux: wayland: Don't hang when using Sway
+- linux: wayland: Fix simulating modifiers
+- linux: x11rb: Fix not being able to enter right modifier keys [#391](https://github.com/enigo-rs/enigo/issues/391)
+- linux: x11rb: Don't assume a modifier mapping and get the modifier mapping dynamically instead [#410](https://github.com/enigo-rs/enigo/issues/410)
+- linux: x11rb: Successfully enter the first simulated character as well
 
 # 0.3.0
 ## Changed
